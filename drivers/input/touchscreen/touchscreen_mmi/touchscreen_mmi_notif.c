@@ -86,12 +86,18 @@ static int inline ts_mmi_panel_on(struct ts_mmi_dev *touch_cdev) {
 	return schedule_delayed_work(&touch_cdev->work, 0) == false;
 }
 
+static void ts_mmi_handle_sysfs_gesture(struct ts_mmi_dev *touch_cdev) {
+	touch_cdev->double_tap_pressed = 0;
+	touch_cdev->single_tap_pressed = 0;
+}
+
 static int ts_mmi_panel_event_handle(struct ts_mmi_dev *touch_cdev, enum ts_mmi_panel_event event)
 {
 	int ret = 0;
 	/* entering suspend upon early blank event */
 	/* to ensure shared power supply is still on */
 	/* for in-cell design touch solutions */
+	ts_mmi_handle_sysfs_gesture(touch_cdev);
 	switch (event) {
 	case TS_MMI_EVENT_PRE_DISPLAY_OFF:
 		cancel_delayed_work_sync(&touch_cdev->work);
@@ -301,6 +307,8 @@ static void ts_mmi_queued_resume(struct ts_mmi_dev *touch_cdev)
 	 */
 	mutex_lock(&touch_cdev->extif_mutex);
 	ts_mmi_restore_settings(touch_cdev);
+	touch_cdev->single_tap_pressed = false;
+	touch_cdev->double_tap_pressed = false;
 	touch_cdev->pm_mode = TS_MMI_PM_ACTIVE;
 	mutex_unlock(&touch_cdev->extif_mutex);
 	dev_info(DEV_MMI, "%s: done\n", __func__);

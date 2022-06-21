@@ -240,6 +240,8 @@ static int ts_mmi_gesture_handler(struct gesture_event_data *gev, int type)
 
 	switch (gev->evcode) {
 	case 1:
+	        touch_cdev->single_tap_pressed = true;
+        	sysfs_notify(&DEV_MMI->kobj, NULL, "single_tap_pressed");
 		key_code = KEY_F1;
 		pr_info("%s: single tap\n", __func__);
 			break;
@@ -258,8 +260,10 @@ static int ts_mmi_gesture_handler(struct gesture_event_data *gev, int type)
 		pr_info("%s: zero tap up\n", __func__);
 		break;
 	case 4:
-		key_code = KEY_WAKEUP;
+		key_code = KEY_F4;
 		pr_info("%s: double tap\n", __func__);
+		touch_cdev->double_tap_pressed = true;
+		sysfs_notify(&DEV_MMI->kobj, NULL, "double_tap_pressed");
 		break;
 	default:
 		need2report = false;
@@ -741,7 +745,7 @@ int ts_mmi_dt_gesture_init(struct ts_mmi_dev *touch_cdev)
 	__set_bit(KEY_F1, sensor_input_dev->keybit);
 	__set_bit(KEY_F2, sensor_input_dev->keybit);
 	__set_bit(KEY_F3, sensor_input_dev->keybit);
-	__set_bit(KEY_WAKEUP, sensor_input_dev->keybit);
+	__set_bit(KEY_F4, sensor_input_dev->keybit);
 	__set_bit(EV_ABS, sensor_input_dev->evbit);
 	__set_bit(EV_SYN, sensor_input_dev->evbit);
 	/* TODO: fill in real screen resolution */
