@@ -126,7 +126,6 @@
                 aw-re-min = <4000>;
                 aw-re-max= <30000>;
                 aw-cali-mode = "aw_attr";
-                skt-prof-mode = <1>;
         };
 
 	aw882xx_recv: aw882xx_recv_smartpa@35 {
@@ -145,7 +144,6 @@
                 aw-re-min = <4000>;
                 aw-re-max= <30000>;
                 aw-cali-mode = "aw_attr";
-                skt-prof-mode = <1>;
         };
 };
 
