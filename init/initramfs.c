@@ -597,7 +597,7 @@ static void __init clean_rootfs(void)
 				if (S_ISDIR(st.mode))
 					ksys_rmdir(dirp->d_name);
 				else
-					ksys_unlink(dirp->d_name);
+					init_unlink(dirp->d_name);
 			}
 
 			num -= dirp->d_reclen;

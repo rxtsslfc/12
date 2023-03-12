@@ -8,6 +8,8 @@
 #include <linux/namei.h>
 #include <linux/fs.h>
 #include <linux/init_syscalls.h>
+#include <linux/security.h>
+
 #include "internal.h"
 
 int __init init_mount(const char *dev_name, const char *dir_name,

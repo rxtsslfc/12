@@ -52,7 +52,7 @@ static long ftrace_size = -1;
 module_param(ftrace_size, long, 0400);
 MODULE_PARM_DESC(ftrace_size, "ftrace size in kbytes");
 
-static bool best_effort;
+static bool best_effort = 1;
 module_param(best_effort, bool, 0400);
 MODULE_PARM_DESC(best_effort, "use best effort to write (i.e. do not require storage driver pstore support, default: off)");
 
@@ -117,11 +117,6 @@ static int __register_pstore_device(struct pstore_device_info *dev)
 		return -EINVAL;
 	}
 
-	/* someone already registered before */
-	if (pstore_device_info)
-		return -EBUSY;
-
-	/* zero means not limit on which backends to attempt to store. */
 	if (!dev->flags)
 		dev->flags = UINT_MAX;
 
@@ -185,6 +180,7 @@ void unregister_pstore_device(struct pstore_device_info *dev)
 }
 EXPORT_SYMBOL_GPL(unregister_pstore_device);
 
+MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
 static ssize_t psblk_generic_blk_read(char *buf, size_t bytes, loff_t pos)
 {
 	return kernel_read(psblk_file, buf, bytes, &pos);
@@ -209,7 +205,6 @@ static int __register_pstore_blk(struct pstore_device_info *dev,
 	int ret = -ENODEV;
 
 	lockdep_assert_held(&pstore_blk_lock);
-
 	psblk_file = filp_open(devpath, O_RDWR | O_DSYNC | O_NOATIME | O_EXCL, 0);
 	if (IS_ERR(psblk_file)) {
 		ret = PTR_ERR(psblk_file);
