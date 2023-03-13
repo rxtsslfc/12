@@ -221,6 +221,14 @@ struct dsi_panel_spr_info {
 	enum msm_display_spr_pack_type pack_type;
 };
 
+struct dsi_panel_lhbm_config {
+	bool enable;
+	u32 dbv_level;
+	u32 alpha_reg;
+	u32 alpha_size;
+	u32 *alpha;
+};
+
 enum panel_idx {
 	MAIN_IDX = 0,
 	SEC_INX,
@@ -339,6 +347,8 @@ struct dsi_panel {
 	struct drm_panel_hdr_properties hdr_props;
 	struct drm_panel_esd_config esd_config;
 
+	struct dsi_panel_lhbm_config lhbm_config;
+
 	struct dsi_parser_utils utils;
 
 	bool lp11_init;
@@ -407,6 +417,7 @@ struct dsi_panel {
 	u8 fod_dim_alpha;
 	bool fod_hbm_enabled;
 	bool fod_ui;
+	struct msm_param_info curDCModeParaInfo;
 };
 
 bool dsi_display_all_displays_dead(void);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
- * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/list.h>
@@ -3837,9 +3837,9 @@ static ssize_t dsi_host_transfer(struct mipi_dsi_host *host,
 			cmd_flags |= DSI_CTRL_CMD_READ;
 		rc = dsi_ctrl_cmd_transfer(display->ctrl[ctrl_idx].ctrl, msg,
 				&cmd_flags);
-
 		if (((cmd_flags & DSI_CTRL_CMD_READ) && rc <= 0) ||
-				(!(cmd_flags & DSI_CTRL_CMD_READ) && rc)) {
+				(!(cmd_flags & DSI_CTRL_CMD_READ) && rc < 0)) {
+
 			DSI_ERR("[%s] cmd transfer failed, rc=%d\n",
 			       display->name, rc);
 			goto error_disable_cmd_engine;
@@ -6576,6 +6576,8 @@ static int panel_class_create(struct platform_device *pdev)
 				if (error)
 					break;
 			}
+			if (!error)
+				break;
 		} else {
 			DSI_ERR("drm_conn->kdev is NULL, retry %d times\n", j);
 		}
