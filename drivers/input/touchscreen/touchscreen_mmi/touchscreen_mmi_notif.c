@@ -17,7 +17,6 @@
 #include <linux/usb.h>
 #include <linux/power_supply.h>
 #include <linux/touchscreen_mmi.h>
-#include <linux/mmi_relay.h>
 
 #if defined(CONFIG_DRM_DYNAMIC_REFRESH_RATE)
 extern struct blocking_notifier_head dsi_freq_head;
@@ -42,32 +41,21 @@ extern struct blocking_notifier_head dsi_freq_head;
 					touch_cdev->mdata->power && \
 					IS_DEEPSLEEP_MODE)
 
-static int ts_mmi_queued_stop(struct ts_mmi_dev *touch_cdev) {
+static int ts_mmi_panel_off(struct ts_mmi_dev *touch_cdev) {
 	int ret = 0;
 
 	if (atomic_cmpxchg(&touch_cdev->touch_stopped, 0, 1) == 1)
 		return 0;
 
+	atomic_set(&touch_cdev->resume_should_stop, 1);
+
 	TRY_TO_CALL(pre_suspend);
-	if (touch_cdev->pdata.gestures_enabled) {
-#ifdef CONFIG_BOARD_USES_DOUBLE_TAP_CTRL
-		if(touch_cdev->gesture_mode_type != 0) {
-			if(touch_cdev->gesture_mode_type & 0x01) {
-				dev_info(DEV_MMI, "%s: try to enter zero Gesture mode\n", __func__);
-				TRY_TO_CALL(panel_state, touch_cdev->pm_mode, TS_MMI_PM_GESTURE_ZERO);
-			}
-			if(touch_cdev->gesture_mode_type & 0x02) {
-				dev_info(DEV_MMI, "%s: try to enter single Gesture mode\n", __func__);
-				TRY_TO_CALL(panel_state, touch_cdev->pm_mode, TS_MMI_PM_GESTURE_SINGLE);
-			}
-			if(touch_cdev->gesture_mode_type & 0x04) {
-				dev_info(DEV_MMI, "%s: try to enter double Gesture mode\n", __func__);
-				TRY_TO_CALL(panel_state, touch_cdev->pm_mode, TS_MMI_PM_GESTURE_DOUBLE);
-			}
-
-			dev_info(DEV_MMI, "%s: notify touch driver to switch gesture mode\n", __func__);
-			TRY_TO_CALL(panel_state, touch_cdev->pm_mode, TS_MMI_PM_GESTURE_SWITCH);
-
+	if (touch_cdev->pdata.gestures_enabled || touch_cdev->pdata.cli_gestures_enabled ||
+		touch_cdev->pdata.support_liquid_detection) {
+#if defined(CONFIG_BOARD_USES_DOUBLE_TAP_CTRL)
+		if(touch_cdev->gesture_mode_type != 0 || touch_cdev->pdata.support_liquid_detection != 0) {
+			dev_info(DEV_MMI, "%s: try to enter Gesture mode\n", __func__);
+			TRY_TO_CALL(panel_state, touch_cdev->pm_mode, TS_MMI_PM_GESTURE);
 			touch_cdev->pm_mode = TS_MMI_PM_GESTURE;
 		}
 #else
@@ -92,41 +80,13 @@ static int ts_mmi_queued_stop(struct ts_mmi_dev *touch_cdev) {
 #endif
 	TRY_TO_CALL(post_suspend);
 
-	if (NEED_TO_SET_PINCTRL) {
-		dev_dbg(DEV_MMI, "%s: touch pinctrl off\n", __func__);
-		TRY_TO_CALL(pinctrl, TS_MMI_PINCTL_OFF);
-	}
-
 	dev_info(DEV_MMI, "%s: done\n", __func__);
 
 	return 0;
 }
 
-static int ts_mmi_panel_off(struct ts_mmi_dev *touch_cdev)
-{
-	kfifo_put(&touch_cdev->cmd_pipe, TS_MMI_DO_SLEEP);
-	/* schedule_delayed_work returns true if work has been scheduled */
-	/* and false otherwise, thus return 0 on success to comply POSIX */
-	return schedule_delayed_work(&touch_cdev->work, 0) == false;
-}
-
-static int ts_mmi_power_off(struct ts_mmi_dev *touch_cdev)
-{
-	kfifo_put(&touch_cdev->cmd_pipe, TS_MMI_DO_POWER_OFF);
-	/* schedule_delayed_work returns true if work has been scheduled */
-	/* and false otherwise, thus return 0 on success to comply POSIX */
-	return schedule_delayed_work(&touch_cdev->work, 0) == false;
-}
-
-static int ts_mmi_power_on(struct ts_mmi_dev *touch_cdev)
-{
-	kfifo_put(&touch_cdev->cmd_pipe, TS_MMI_DO_POWER_ON);
-	/* schedule_delayed_work returns true if work has been scheduled */
-	/* and false otherwise, thus return 0 on success to comply POSIX */
-	return schedule_delayed_work(&touch_cdev->work, 0) == false;
-}
-
 static int inline ts_mmi_panel_on(struct ts_mmi_dev *touch_cdev) {
+	atomic_set(&touch_cdev->resume_should_stop, 0);
 	kfifo_put(&touch_cdev->cmd_pipe, TS_MMI_DO_RESUME);
 	/* schedule_delayed_work returns true if work has been scheduled */
 	/* and false otherwise, thus return 0 on success to comply POSIX */
@@ -141,18 +101,43 @@ static int ts_mmi_panel_event_handle(struct ts_mmi_dev *touch_cdev, enum ts_mmi_
 	/* for in-cell design touch solutions */
 	switch (event) {
 	case TS_MMI_EVENT_PRE_DISPLAY_OFF:
+		cancel_delayed_work_sync(&touch_cdev->work);
 		ts_mmi_panel_off(touch_cdev);
+		if (NEED_TO_SET_PINCTRL) {
+			dev_dbg(DEV_MMI, "%s: touch pinctrl off\n", __func__);
+			TRY_TO_CALL(pinctrl, TS_MMI_PINCTL_OFF);
+		}
 		break;
 
 	case TS_MMI_EVENT_DISPLAY_OFF:
-		ts_mmi_power_off(touch_cdev);
+		if (NEED_TO_SET_POWER) {
+			/* then proceed with de-powering */
+			TRY_TO_CALL(power, TS_MMI_POWER_OFF);
+			dev_dbg(DEV_MMI, "%s: touch powered off\n", __func__);
+		}
 		break;
 
 	case TS_MMI_EVENT_PRE_DISPLAY_ON:
-		ts_mmi_power_on(touch_cdev);
+		if (NEED_TO_SET_POWER) {
+			/* powering on early */
+			TRY_TO_CALL(power, TS_MMI_POWER_ON);
+			dev_dbg(DEV_MMI, "%s: touch powered on\n", __func__);
+		} else if (touch_cdev->pdata.reset &&
+			touch_cdev->mdata->reset) {
+			/* Power is not off in previous suspend.
+			 * But need reset IC in resume.
+			 */
+			dev_dbg(DEV_MMI, "%s: resetting...\n", __func__);
+			TRY_TO_CALL(reset, TS_MMI_RESET_HARD);
+		}
 		break;
 
 	case TS_MMI_EVENT_DISPLAY_ON:
+		/* out of reset to allow wait for boot complete */
+		if (NEED_TO_SET_PINCTRL) {
+			TRY_TO_CALL(pinctrl, TS_MMI_PINCTL_ON);
+			dev_dbg(DEV_MMI, "%s: touch pinctrl_on\n", __func__);
+		}
 		ts_mmi_panel_on(touch_cdev);
 		break;
 
@@ -181,19 +166,17 @@ static void ts_mmi_panel_cb(enum panel_event_notifier_tag tag,
 	event = notification->notif_type;
 	evdata = notification->notif_data;
 
-	dev_dbg(DEV_MMI, "%s: %s Notify_type=%d, early=%d\n", __func__,
+	dev_dbg(DEV_MMI, "%s: %s Notify_type=%d, early=%d, ctrl_dsi=%d\n", __func__,
 		EVENT_PRE_DISPLAY_OFF ? "EVENT_PRE_DISPLAY_OFF" :
-		(EVENT_DISPLAY_LP ? "EVENT_DISPLAY_LP" :
 		(EVENT_DISPLAY_OFF ?     "EVENT_DISPLAY_OFF" :
 		(EVENT_PRE_DISPLAY_ON ?   "EVENT_PRE_DISPLAY_ON" :
-		(EVENT_DISPLAY_ON ?       "EVENT_DISPLAY_ON" : "Unknown")))),
-		event, (evdata.early_trigger ? 1 : 0));
+		(EVENT_DISPLAY_ON ?       "EVENT_DISPLAY_ON" : "Unknown"))),
+		event, (evdata.early_trigger ? 1 : 0), touch_cdev->pdata.ctrl_dsi);
 
 	panel_event = EVENT_PRE_DISPLAY_OFF ? TS_MMI_EVENT_PRE_DISPLAY_OFF :
-		(EVENT_DISPLAY_LP ? TS_MMI_EVENT_PRE_DISPLAY_OFF :
 		(EVENT_DISPLAY_OFF ? TS_MMI_EVENT_DISPLAY_OFF :
 		(EVENT_PRE_DISPLAY_ON ? TS_MMI_EVENT_PRE_DISPLAY_ON :
-		(EVENT_DISPLAY_ON ? TS_MMI_EVENT_DISPLAY_ON : TS_MMI_EVENT_UNKNOWN))));
+		(EVENT_DISPLAY_ON ? TS_MMI_EVENT_DISPLAY_ON : TS_MMI_EVENT_UNKNOWN)));
 
 	ts_mmi_panel_event_handle(touch_cdev, panel_event);
 
@@ -216,20 +199,18 @@ static int ts_mmi_panel_cb(struct notifier_block *nb,
 
 	dev_dbg(DEV_MMI,"%s: %s event(%lu), ctrl_dsi=%d, idx=%d\n", __func__,
 		EVENT_PRE_DISPLAY_OFF ? "EVENT_PRE_DISPLAY_OFF" :
-		(EVENT_DISPLAY_LP ? "EVENT_DISPLAY_LP" :
 		(EVENT_DISPLAY_OFF ?     "EVENT_DISPLAY_OFF" :
 		(EVENT_PRE_DISPLAY_ON ?   "EVENT_PRE_DISPLAY_ON" :
-		(EVENT_DISPLAY_ON ?       "EVENT_DISPLAY_ON" : "Unknown")))),
+		(EVENT_DISPLAY_ON ?       "EVENT_DISPLAY_ON" : "Unknown"))),
 		event, touch_cdev->pdata.ctrl_dsi, idx);
 
 	if (touch_cdev->pdata.ctrl_dsi != idx)
 		return 0;
 
 	panel_event = EVENT_PRE_DISPLAY_OFF ? TS_MMI_EVENT_PRE_DISPLAY_OFF :
-		(EVENT_DISPLAY_LP ? TS_MMI_EVENT_PRE_DISPLAY_OFF :
 		(EVENT_DISPLAY_OFF ? TS_MMI_EVENT_DISPLAY_OFF :
 		(EVENT_PRE_DISPLAY_ON ? TS_MMI_EVENT_PRE_DISPLAY_ON :
-		(EVENT_DISPLAY_ON ? TS_MMI_EVENT_DISPLAY_ON : TS_MMI_EVENT_UNKNOWN))));
+		(EVENT_DISPLAY_ON ? TS_MMI_EVENT_DISPLAY_ON : TS_MMI_EVENT_UNKNOWN)));
 
 	ret = ts_mmi_panel_event_handle(touch_cdev, panel_event);
 
@@ -253,37 +234,10 @@ static inline void ts_mmi_restore_settings(struct ts_mmi_dev *touch_cdev)
 		TRY_TO_CALL(hold_distance, (int)touch_cdev->hold_distance);
 	if (touch_cdev->pdata.gs_distance_ctrl)
 		TRY_TO_CALL(gs_distance, (int)touch_cdev->gs_distance);
+	if (touch_cdev->pdata.active_region_ctrl)
+		TRY_TO_CALL(active_region, (unsigned int *)touch_cdev->active_region);
 
 	dev_dbg(DEV_MMI, "%s: done\n", __func__);
-}
-
-static void ts_mmi_queued_power_on(struct ts_mmi_dev *touch_cdev)
-{
-	int ret = 0;
-
-	if (NEED_TO_SET_POWER) {
-		/* powering on early */
-		TRY_TO_CALL(power, TS_MMI_POWER_ON);
-		dev_dbg(DEV_MMI, "%s: touch powered on\n", __func__);
-	} else if (touch_cdev->pdata.reset &&
-		touch_cdev->mdata->reset) {
-		/* Power is not off in previous suspend.
-		 * But need reset IC in resume.
-		 */
-		dev_dbg(DEV_MMI, "%s: resetting...\n", __func__);
-		TRY_TO_CALL(reset, TS_MMI_RESET_HARD);
-	}
-}
-
-static void ts_mmi_queued_power_off(struct ts_mmi_dev *touch_cdev)
-{
-	int ret = 0;
-
-	if (NEED_TO_SET_POWER) {
-		/* then proceed with de-powering */
-		TRY_TO_CALL(power, TS_MMI_POWER_OFF);
-		dev_dbg(DEV_MMI, "%s: touch powered off\n", __func__);
-	}
 }
 
 static void ts_mmi_queued_resume(struct ts_mmi_dev *touch_cdev)
@@ -293,12 +247,6 @@ static void ts_mmi_queued_resume(struct ts_mmi_dev *touch_cdev)
 
 	if (atomic_cmpxchg(&touch_cdev->touch_stopped, 1, 0) == 0)
 		return;
-
-	/* out of reset to allow wait for boot complete */
-	if (NEED_TO_SET_PINCTRL) {
-		TRY_TO_CALL(pinctrl, TS_MMI_PINCTL_ON);
-		dev_dbg(DEV_MMI, "%s: touch pinctrl_on\n", __func__);
-	}
 
 #ifdef TS_MMI_TOUCH_MULTIWAY_UPDATE_FW
 	if (touch_cdev->flash_mode == FW_PARAM_MODE &&\
@@ -360,9 +308,6 @@ static void ts_mmi_queued_resume(struct ts_mmi_dev *touch_cdev)
 	 */
 	mutex_lock(&touch_cdev->extif_mutex);
 	ts_mmi_restore_settings(touch_cdev);
-	touch_cdev->single_tap_pressed = false;
-	touch_cdev->double_tap_pressed = false;
-	touch_cdev->udfps_pressed = false;
 	touch_cdev->pm_mode = TS_MMI_PM_ACTIVE;
 	mutex_unlock(&touch_cdev->extif_mutex);
 	dev_info(DEV_MMI, "%s: done\n", __func__);
@@ -375,24 +320,20 @@ static void ts_mmi_worker_func(struct work_struct *w)
 	struct ts_mmi_dev *touch_cdev =
 		container_of(dw, struct ts_mmi_dev, work);
 	int ret, cmd = 0;
+#if defined (CONFIG_DRM_PANEL_NOTIFICATIONS) || defined (CONFIG_DRM_PANEL_EVENT_NOTIFICATIONS)
+	static DEFINE_RATELIMIT_STATE(register_panel, HZ, 1);
+#endif
 
 	while (kfifo_get(&touch_cdev->cmd_pipe, &cmd)) {
 		switch (cmd) {
-		case TS_MMI_DO_POWER_ON:
-			ts_mmi_queued_power_on(touch_cdev);
-			break;
-
 		case TS_MMI_DO_RESUME:
+			ret = atomic_read(&touch_cdev->resume_should_stop);
+			if (ret) {
+				dev_info(DEV_MMI, "%s: resume cancelled\n", __func__);
+				break;
+			}
 			ts_mmi_queued_resume(touch_cdev);
 				break;
-
-		case TS_MMI_DO_SLEEP:
-			ts_mmi_queued_stop(touch_cdev);
-			break;
-
-		case TS_MMI_DO_POWER_OFF:
-			ts_mmi_queued_power_off(touch_cdev);
-			break;
 
 		case TS_MMI_DO_PS:
 			TRY_TO_CALL(charger_mode, (int)touch_cdev->ps_is_present);
@@ -421,9 +362,11 @@ static void ts_mmi_worker_func(struct work_struct *w)
 
 		case TS_MMI_TASK_INIT:
 #if defined (CONFIG_DRM_PANEL_NOTIFICATIONS) || defined (CONFIG_DRM_PANEL_EVENT_NOTIFICATIONS)
-			ret = ts_mmi_check_drm_panel(DEV_TS->of_node);
+			ret = ts_mmi_check_drm_panel(touch_cdev, DEV_TS->of_node);
 			if (ret < 0) {
-				dev_err(DEV_TS, "%s: check drm panel failed. %d\n", __func__, ret);
+				/* 1 error message for every 1 sec */
+				if (__ratelimit(&register_panel))
+					dev_err(DEV_TS, "%s: check drm panel failed. %d\n", __func__, ret);
 				touch_cdev->panel_status = -1;
 			} else
 				touch_cdev->panel_status = 0;
@@ -434,16 +377,9 @@ static void ts_mmi_worker_func(struct work_struct *w)
 			}
 				break;
 
-		case TS_MMI_SET_GESTURES:
-			if (!atomic_read(&touch_cdev->touch_stopped))
+		case TS_MMI_DO_LIQUID_DETECTION:
+				TRY_TO_CALL(update_liquid_detect_mode, touch_cdev->lpd_state);
 				break;
-
-			ts_mmi_queued_power_on(touch_cdev);
-			ts_mmi_queued_resume(touch_cdev);
-			ts_mmi_queued_stop(touch_cdev);
-			ts_mmi_queued_power_off(touch_cdev);
-
-			break;
 
 		default:
 			dev_dbg(DEV_MMI, "%s: unknown command %d\n", __func__, cmd);
@@ -576,6 +512,50 @@ static int ts_mmi_fps_notifier_register(struct ts_mmi_dev *touch_cdev, bool enab
 	return 0;
 }
 
+static int ts_mmi_lpd_cb(struct notifier_block *self,
+				unsigned long event, void *p)
+{
+	int lpd_state = *(int *)p;
+	struct ts_mmi_dev *touch_cdev = container_of(
+					self, struct ts_mmi_dev, lpd_notif);
+
+	if (touch_cdev && event == NOTIFY_EVENT_LPD_STATUS &&
+		lpd_state != touch_cdev->lpd_state) {
+		touch_cdev->lpd_state = lpd_state;
+		kfifo_put(&touch_cdev->cmd_pipe, TS_MMI_DO_LIQUID_DETECTION);
+		schedule_delayed_work(&touch_cdev->work, 0);
+		dev_info(DEV_MMI, "LPD state is %d\n", touch_cdev->lpd_state);
+	}
+
+	return 0;
+}
+
+static int ts_mmi_lpd_notifier_register(struct ts_mmi_dev *touch_cdev, bool enable) {
+	int ret;
+
+	if (enable) {
+		touch_cdev->lpd_notif.notifier_call = ts_mmi_lpd_cb;
+		/*register a blocking notification to receive LPD events*/
+		ret = relay_register_action(BLOCKING, LPD, &touch_cdev->lpd_notif);
+		if (ret < 0) {
+			dev_err(DEV_TS,
+				"Failed to register lpd_notifier: %d\n", ret);
+			return ret;
+		}
+		touch_cdev->is_lpd_registered = true;
+		dev_info(DEV_TS, "Register lpd_notifier OK\n");
+	} else if (touch_cdev->is_lpd_registered){
+		ret = relay_unregister_action(BLOCKING, LPD, &touch_cdev->lpd_notif);
+		if (ret < 0) {
+			dev_err(DEV_TS,
+				"Failed to unregister lpd_notifier: %d\n", ret);
+		}
+		touch_cdev->is_lpd_registered = false;
+		dev_info(DEV_TS, "Unregister lpd_notifier OK\n");
+	}
+	return 0;
+}
+
 int ts_mmi_notifiers_register(struct ts_mmi_dev *touch_cdev)
 {
 	int ret = 0;
@@ -638,6 +618,13 @@ int ts_mmi_notifiers_register(struct ts_mmi_dev *touch_cdev)
 				"Failed to register fps_notifier: %d\n", ret);
 	}
 
+	if (touch_cdev->pdata.support_liquid_detection) {
+		ret = ts_mmi_lpd_notifier_register(touch_cdev, true);
+		if (ret < 0)
+			dev_err(DEV_TS,
+				"Failed to register lpd_notifier: %d\n", ret);
+	}
+
 	dev_info(DEV_TS, "%s: Notifiers init OK.\n", __func__);
 	return 0;
 
@@ -667,6 +654,9 @@ void ts_mmi_notifiers_unregister(struct ts_mmi_dev *touch_cdev)
 
 	if (!touch_cdev->panel_status)
 		UNREGISTER_PANEL_NOTIFIER;
+
+	if (touch_cdev->pdata.support_liquid_detection)
+		ts_mmi_lpd_notifier_register(touch_cdev, false);
 
 	cancel_delayed_work(&touch_cdev->work);
 	kfifo_free(&touch_cdev->cmd_pipe);

@@ -1117,6 +1117,11 @@ static int goodix_parse_dt(struct device_node *node,
 	if (board_data->interpolation_ctrl)
 		ts_info("support goodix interpolation mode");
 
+	board_data->sample_ctrl = of_property_read_bool(node,
+					"goodix,sample-ctrl");
+	if (board_data->sample_ctrl)
+		ts_info("support goodix sample mode");
+
 	board_data->report_rate_ctrl = of_property_read_bool(node,
 					"goodix,report_rate-ctrl");
 	if (board_data->report_rate_ctrl)
@@ -1162,6 +1167,11 @@ static void goodix_ts_report_pen(struct input_dev *dev,
 		input_report_key(dev, BTN_TOUCH, 0);
 		input_report_key(dev, pen_data->coords.tool_type, 0);
 	}
+
+#ifdef CONFIG_GTP_DDA_STYLUS
+	goodix_dda_process_pen_report(pen_data);
+#endif
+
 	/* report pen button */
 	for (i = 0; i < GOODIX_MAX_PEN_KEY; i++) {
 		if (pen_data->keys[i].status == TS_TOUCH)
@@ -1197,7 +1207,7 @@ static void goodix_ts_report_finger(struct input_dev *dev,
 				touch_data->coords[i].w);
 			if (touchdown[i] == 0) {
 #ifdef CONFIG_GTP_LAST_TIME
-				core_data->last_event_time = ktime_get();
+				core_data->last_event_time = ktime_get_boottime();
 				ts_debug("TOUCH: [%d] logged timestamp\n", i);
 #endif
 				touchdown[i] = 1;
@@ -1229,11 +1239,13 @@ static void goodix_ts_report_finger(struct input_dev *dev,
 				input_sync(dev);
 				input_report_key(dev, BTN_TRIGGER_HAPPY1, 0);
 				input_sync(dev);
-			}else if(ts_event->gesture_type == GOODIX_GESTURE_FOD_UP && touch_num <=0) {
+				ts_info("report BTN_TRIGGER_HAPPY1");
+			}else if(ts_event->gesture_type == GOODIX_GESTURE_FOD_UP) {
 				input_report_key(dev, BTN_TRIGGER_HAPPY2, 1);
 				input_sync(dev);
 				input_report_key(dev, BTN_TRIGGER_HAPPY2, 0);
 				input_sync(dev);
+				ts_info("report BTN_TRIGGER_HAPPY2");
 			}
 		}
 		ts_debug("fod_enable= %d, gesture_type =%x, touch_num= %d", core_data->fod_enable,
@@ -2159,7 +2171,7 @@ static int goodix_generic_noti_callback(struct notifier_block *self,
 		hw_ops->irq_enable(cd, 0);
 		break;
 	case NOTIFY_FWUPDATE_SUCCESS:
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
+#ifdef CONFIG_INPUT_TOUCHSCREEN_MMI
 		if (cd->need_update_cfg) {
 			if (goodix_get_config_proc(cd)) {
 				ts_info("no valid ic config found");
@@ -2292,7 +2304,7 @@ static int goodix_later_init_thread(void *data)
 	/* setp 2: get config data from config bin */
 	if (goodix_get_config_proc(cd)) {
 		ts_info("no valid ic config found");
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
+#ifdef CONFIG_INPUT_TOUCHSCREEN_MMI
 		cd->need_update_cfg = 1;
 #endif
 	} else
@@ -2312,7 +2324,7 @@ static int goodix_later_init_thread(void *data)
 	ret = hw_ops->read_version(cd, &cd->fw_version);
 	if (ret) {
 		ts_err("invalid fw version, abort");
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
+#ifdef CONFIG_INPUT_TOUCHSCREEN_MMI
 		goto stage2_init;
 #endif
 		goto uninit_fw;
@@ -2320,18 +2332,20 @@ static int goodix_later_init_thread(void *data)
 	ret = hw_ops->get_ic_info(cd, &cd->ic_info);
 	if (ret) {
 		ts_err("invalid ic info, abort");
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
+#ifdef CONFIG_INPUT_TOUCHSCREEN_MMI
 		goto stage2_init;
 #endif
 		goto uninit_fw;
 	}
 
+#ifndef CONFIG_INPUT_TOUCHSCREEN_MMI
 	/* the recomend way to update ic config is throuth ISP,
 	 * if not we will send config with interactive mode
 	 */
 	goodix_send_ic_config(cd, CONFIG_TYPE_NORMAL);
+#endif
 
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
+#ifdef CONFIG_INPUT_TOUCHSCREEN_MMI
 stage2_init:
 #endif
 	/* init other resources */
@@ -2467,7 +2481,7 @@ static int goodix_ts_probe(struct platform_device *pdev)
 	core_data->ts_notifier.notifier_call = goodix_generic_noti_callback;
 	goodix_ts_register_notifier(&core_data->ts_notifier);
 
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
+#ifdef CONFIG_INPUT_TOUCHSCREEN_MMI
 	ts_info("%s:goodix_ts_mmi_dev_register",__func__);
 	ret = goodix_ts_mmi_dev_register(pdev);
 	if (ret) {
@@ -2494,6 +2508,13 @@ static int goodix_ts_probe(struct platform_device *pdev)
 
 	/* debug node init */
 	goodix_tools_init();
+
+#ifdef CONFIG_GTP_DDA_STYLUS
+	goodix_stylus_dda_init();
+	ret = goodix_stylus_dda_register_cdevice();
+	if (ret)
+		ts_err("Failed register stylus dda device, %d", ret);
+#endif
 
 	core_data->init_stage = CORE_INIT_STAGE1;
 	goodix_modules.core_data = core_data;
@@ -2527,12 +2548,15 @@ static int goodix_ts_remove(struct platform_device *pdev)
 #ifdef CONFIG_GTP_ENABLE_PM_QOS
 	cpu_latency_qos_remove_request(&core_data->goodix_pm_qos);
 #endif
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
-	ts_info("%s:goodix_ts_mmi_dev_register",__func__);
+#ifdef CONFIG_INPUT_TOUCHSCREEN_MMI
+	ts_info("%s:goodix_ts_mmi_dev_unregister",__func__);
 	goodix_ts_mmi_dev_unregister(pdev);
 #endif
 
 	goodix_ts_unregister_notifier(&core_data->ts_notifier);
+#ifdef CONFIG_GTP_DDA_STYLUS
+	goodix_stylus_dda_exit();
+#endif
 	goodix_tools_exit();
 
 	if (core_data->init_stage >= CORE_INIT_STAGE2) {

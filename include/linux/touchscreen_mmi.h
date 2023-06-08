@@ -21,6 +21,7 @@
 #include <linux/kernel.h>
 #include <linux/input.h>
 #include <linux/mmi_kernel_common.h>
+#include <linux/mmi_relay.h>
 
 #if defined(CONFIG_PANEL_NOTIFICATIONS)
 
@@ -55,13 +56,19 @@
 #else /* CONFIG_PANEL_NOTIFICATIONS */
 #if defined(CONFIG_DRM_PANEL_EVENT_NOTIFICATIONS)
 #include <linux/soc/qcom/panel_event_notifier.h>
-extern struct drm_panel *active_panel;
 
 #define REGISTER_PANEL_NOTIFIER { \
 	void *cookie = NULL; \
-	cookie = panel_event_notifier_register(PANEL_EVENT_NOTIFICATION_PRIMARY, \
-		PANEL_EVENT_NOTIFIER_CLIENT_PRIMARY_TOUCH, active_panel, \
-		&ts_mmi_panel_cb, touch_cdev); \
+	struct ts_mmi_dev_pdata *ppdata = &touch_cdev->pdata; \
+	if (!ppdata->ctrl_dsi) { \
+		cookie = panel_event_notifier_register(PANEL_EVENT_NOTIFICATION_PRIMARY, \
+			PANEL_EVENT_NOTIFIER_CLIENT_PRIMARY_TOUCH, touch_cdev->active_panel, \
+			&ts_mmi_panel_cb, touch_cdev); \
+	} else { \
+		cookie = panel_event_notifier_register(PANEL_EVENT_NOTIFICATION_SECONDARY, \
+			PANEL_EVENT_NOTIFIER_CLIENT_SECONDARY_TOUCH, touch_cdev->active_panel, \
+			&ts_mmi_panel_cb, touch_cdev); \
+	} \
 	if (!cookie) \
 		ret = -1; \
 	else \
@@ -91,14 +98,13 @@ extern struct drm_panel *active_panel;
 #else /* CONFIG_DRM_PANEL_EVENT_NOTIFICATIONS */
 #if defined(CONFIG_DRM_PANEL_NOTIFICATIONS)
 #include <drm/drm_panel.h>
-extern struct drm_panel *active_panel;
 #define REGISTER_PANEL_NOTIFIER {\
 	touch_cdev->panel_nb.notifier_call = ts_mmi_panel_cb; \
-	ret = drm_panel_notifier_register(active_panel, &touch_cdev->panel_nb); \
+	ret = drm_panel_notifier_register(touch_cdev->active_panel, &touch_cdev->panel_nb); \
 }
 
 #define UNREGISTER_PANEL_NOTIFIER {\
-	drm_panel_notifier_unregister(active_panel, &touch_cdev->panel_nb);\
+	drm_panel_notifier_unregister(touch_cdev->active_panel, &touch_cdev->panel_nb);\
 }
 
 #define GET_CONTROL_DSI_INDEX \
@@ -130,11 +136,6 @@ struct drm_panel_notifier *evdata = evd; \
 #define EVENT_DISPLAY_ON \
 	((event == DRM_PANEL_EVENT_BLANK) && \
 	 (*blank == DRM_PANEL_BLANK_UNBLANK))
-
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
-#define EVENT_DISPLAY_LP \
-	(*blank == DRM_PANEL_BLANK_LP)
-#endif
 
 #else /* CONFIG_DRM_PANEL_NOTIFICATIONS */
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4,14,0)
@@ -238,6 +239,7 @@ static inline unsigned long long timediff_ms(
 #define TS_MMI_MAX_CLASS_NAME_LEN	16
 #define TS_MMI_MAX_PANEL_LEN		16
 #define TS_MMI_PILL_REGION_REQ_ARGS_NUM	3
+#define TS_MMI_ACTIVE_REGION_REQ_ARGS_NUM 4
 #define TS_MMI_FW_PARAM_PATH	"/data/vendor/param/touch/"
 
 enum touch_event_mode {
@@ -275,30 +277,20 @@ struct gesture_event_data {
  */
 struct ts_mmi_class_methods {
 	int     (*report_gesture)(struct gesture_event_data *gev);
+	int     (*get_gesture_type)(struct device *dev, unsigned char *gesture_type);
 	int     (*report_palm)(bool value);
 	int     (*get_class_fname)(struct device *dev , const char **fname);
 	int     (*get_supplier)(struct device *dev , const char **sname);
 	int     (*report_touch_event)(struct touch_event_data *tev, struct input_dev *input_dev);
+	int     (*report_liquid_detection_status)(struct device *parent, int status);
 	struct kobject *kobj_notify;
 };
 
 enum ts_mmi_pm_mode {
 	TS_MMI_PM_DEEPSLEEP = 0,
 	TS_MMI_PM_GESTURE,
-	TS_MMI_PM_ACTIVE,
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
-	TS_MMI_PM_GESTURE_SINGLE,
-	TS_MMI_PM_GESTURE_DOUBLE,
-	TS_MMI_PM_GESTURE_ZERO,
-	TS_MMI_PM_GESTURE_SWITCH,
-};
-
-enum ts_mmi_gesture_bit {
-	TS_MMI_GESTURE_ZERO = BIT(0),
-	TS_MMI_GESTURE_SINGLE = BIT(1),
-	TS_MMI_GESTURE_DOUBLE = BIT(2),
-#endif
-};
+	TS_MMI_PM_ACTIVE
+	};
 
 enum ts_mmi_panel_event {
 	TS_MMI_EVENT_PRE_DISPLAY_OFF,
@@ -309,19 +301,14 @@ enum ts_mmi_panel_event {
 	TS_MMI_EVENT_UNKNOWN
 };
 
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
 enum ts_mmi_work {
-	TS_MMI_DO_POWER_ON,
 	TS_MMI_DO_RESUME,
-	TS_MMI_DO_SLEEP,
-	TS_MMI_DO_POWER_OFF,
 	TS_MMI_DO_PS,
 	TS_MMI_DO_REFRESH_RATE,
 	TS_MMI_DO_FPS,
 	TS_MMI_TASK_INIT,
-	TS_MMI_SET_GESTURES,
+	TS_MMI_DO_LIQUID_DETECTION,
 };
-#endif
 
 #define TS_MMI_RESET_SOFT	0
 #define TS_MMI_RESET_HARD	1
@@ -342,6 +329,10 @@ enum ts_mmi_work {
 #define TOUCHSCREEN_MMI_DEFAULT_POISON_TIMEOUT_MS	800
 #define TOUCHSCREEN_MMI_DEFAULT_POISON_TRIGGER_DISTANCE	120
 #define TOUCHSCREEN_MMI_DEFAULT_POISON_DISTANCE	25
+
+#define TS_MMI_GESTURE_ZERO 0x01
+#define TS_MMI_GESTURE_SINGLE 0x02
+#define TS_MMI_GESTURE_DOUBLE 0x04
 
 /**
  * struct touchscreen_mmi_methods - hold vendor provided functions
@@ -378,6 +369,7 @@ enum ts_mmi_work {
 	int	(*get_poison_timeout)(struct device *dev, void *idata);
 	int	(*get_poison_distance)(struct device *dev, void *idata);
 	int	(*get_poison_trigger_distance)(struct device *dev, void *idata);
+	int	(*get_active_region)(struct device *dev, void *uiadata);
 	/* SET methods */
 	int	(*reset)(struct device *dev, int type);
 	int	(*drv_irq)(struct device *dev, int state);
@@ -396,9 +388,9 @@ enum ts_mmi_work {
 	int	(*poison_distance)(struct device *dev, int dis);
 	int	(*poison_trigger_distance)(struct device *dev, int dis);
 	int	(*update_baseline)(struct device *dev, int enable);
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
 	int	(*update_fod_mode)(struct device *dev, int enable);
-#endif
+	int	(*active_region)(struct device *dev, int *region_array);
+	int	(*update_liquid_detect_mode)(struct device *dev, int enable);
 	/* Firmware */
 	int	(*firmware_update)(struct device *dev, char *fwname);
 	int	(*firmware_erase)(struct device *dev);
@@ -426,12 +418,11 @@ enum ts_mmi_work {
 struct ts_mmi_dev_pdata {
 	bool		power_off_suspend;
 	bool		fps_detection;
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
 	bool		fod_detection;
-#endif
 	bool		usb_detection;
 	bool		update_refresh_rate;
 	bool		gestures_enabled;
+	bool		cli_gestures_enabled;
 	bool		palm_enabled;
 	bool		fw_load_resume;
 	bool		suppression_ctrl;
@@ -440,12 +431,12 @@ struct ts_mmi_dev_pdata {
 	bool		gs_distance_ctrl;
 	bool		hold_grip_ctrl;
 	bool		poison_slot_ctrl;
+	bool		active_region_ctrl;
+	bool		support_liquid_detection;
 	int		max_x;
 	int		max_y;
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
 	int		fod_x;
 	int		fod_y;
-#endif
 	int 		ctrl_dsi;
 	int		reset;
 	const char	*class_entry_name;
@@ -477,11 +468,12 @@ struct ts_mmi_dev {
 	struct device		*class_dev;
 	dev_t			class_dev_no;
 	int			forcereflash;
-#ifdef CONFIG_BOARD_USES_DOUBLE_TAP_CTRL
 	unsigned char gesture_mode_type;
-#endif
 	int			panel_status;
 	struct ts_mmi_dev_pdata	pdata;
+#if defined(CONFIG_DRM_PANEL_NOTIFICATIONS) || defined (CONFIG_DRM_PANEL_EVENT_NOTIFICATIONS)
+	struct drm_panel *active_panel;
+#endif
 #ifdef CONFIG_DRM_PANEL_EVENT_NOTIFICATIONS
 	void *notifier_cookie;
 #else
@@ -496,9 +488,7 @@ struct ts_mmi_dev {
 	atomic_t		touch_stopped;
 	enum ts_mmi_pm_mode	pm_mode;
 
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI_V1)
 	atomic_t		resume_should_stop;
-#endif
 	struct delayed_work	work;
 	struct kfifo		cmd_pipe;
 
@@ -513,6 +503,11 @@ struct ts_mmi_dev {
 	bool is_fps_registered;	/* FPS notif registration might be delayed */
 	bool fps_state;
 	bool delay_baseline_update;
+
+	struct notifier_block	lpd_notif;
+	bool is_lpd_registered;	/* LPD notif registration might be delayed */
+	bool lpd_state;
+	int liquid_status;
 
 	/*
 	 * sys entey variable
@@ -530,6 +525,7 @@ struct ts_mmi_dev {
 	int			flashprog;
 	int			suppression;
 	unsigned int		pill_region[TS_MMI_PILL_REGION_REQ_ARGS_NUM];
+	unsigned int		active_region[TS_MMI_ACTIVE_REGION_REQ_ARGS_NUM];
 	int			hold_distance;
 	int			gs_distance;
 	int			hold_grip;
@@ -543,18 +539,6 @@ struct ts_mmi_dev {
 	int			update_baseline;
 	struct attribute_group	*extern_group;
 	struct list_head	node;
-
-	ktime_t			single_tap_pressed_time;
-	bool			single_tap_pressed;
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI_V1)
-	bool			double_tap_enabled_prev;
-	bool			double_tap_enabled;
-#endif
-	bool			double_tap_pressed;
-#if IS_ENABLED(CONFIG_INPUT_TOUCHSCREEN_MMI)
-	bool			udfps_pressed;
-#endif
-
 	/*
 	 * vendor provided
 	 */
@@ -600,13 +584,15 @@ extern void ts_mmi_dev_unregister(struct device *parent);
 extern int ts_mmi_parse_dt(struct ts_mmi_dev *touch_cdev, struct device_node *of_node);
 extern int ts_mmi_gesture_init(struct ts_mmi_dev *data);
 extern int ts_mmi_gesture_remove(struct ts_mmi_dev *data);
+extern int ts_mmi_cli_gesture_init(struct ts_mmi_dev *data);
+extern int ts_mmi_cli_gesture_remove(struct ts_mmi_dev *data);
 extern int ts_mmi_palm_init(struct ts_mmi_dev *data);
 extern int ts_mmi_palm_remove(struct ts_mmi_dev *data);
 #ifdef TS_MMI_TOUCH_EDGE_GESTURE
 extern int ts_mmi_gesture_suspend(struct ts_mmi_dev *touch_cdev);
 #endif
 #if defined (CONFIG_DRM_PANEL_NOTIFICATIONS) || defined (CONFIG_DRM_PANEL_EVENT_NOTIFICATIONS)
-int ts_mmi_check_drm_panel(struct device_node *of_node);
+int ts_mmi_check_drm_panel(struct ts_mmi_dev* touch_cdev, struct device_node *of_node);
 #endif
 extern bool ts_mmi_is_panel_match(const char *panel_node, char *touch_ic_name);
 
