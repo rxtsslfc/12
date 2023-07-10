@@ -937,15 +937,6 @@ int ts_mmi_dev_register(struct device *parent,
 		}
 	}
 
-	if (touch_cdev->pdata.cli_gestures_enabled) {
-		ret = ts_mmi_cli_gesture_init(touch_cdev);
-		if (ret < 0) {
-			dev_err(DEV_TS, "%s: Register CLI gesture failed. %d\n",
-				__func__, ret);
-			goto GESTURE_INIT_FAILED;
-		}
-	}
-
 	if (touch_cdev->pdata.palm_enabled) {
 		ret = ts_mmi_palm_init(touch_cdev);
 		if (ret < 0) {
@@ -1011,10 +1002,11 @@ void ts_mmi_dev_unregister(struct device *parent)
 		dev_err(parent, "%s: device not registered before.\n", __func__);
 		return;
 	}
-	if (touch_cdev->pdata.gestures_enabled)
-		ts_mmi_gesture_remove(touch_cdev);
-	if (touch_cdev->pdata.cli_gestures_enabled)
-		ts_mmi_cli_gesture_remove(touch_cdev);
+	if (touch_cdev->pdata.gestures_enabled) {
+		ts_mmi_fod_gesture_remove(touch_cdev);
+		ts_mmi_dt_gesture_remove(touch_cdev);
+		ts_mmi_st_gesture_remove(touch_cdev);
+	}
 	if (touch_cdev->pdata.palm_enabled)
 		ts_mmi_palm_remove(touch_cdev);
 	ts_mmi_notifiers_unregister(touch_cdev);

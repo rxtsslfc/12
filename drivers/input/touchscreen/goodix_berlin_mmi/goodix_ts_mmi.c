@@ -920,20 +920,20 @@ static int goodix_ts_mmi_panel_state(struct device *dev,
 #if defined(CONFIG_BOARD_USES_DOUBLE_TAP_CTRL)
 	int ret = 0;
 	unsigned short gesture_cmd = 0xFFFF;
-	unsigned char gesture_type = 0;
+	unsigned char gesture_type;
 #endif
 
 	GET_GOODIX_DATA(dev);
 	hw_ops = core_data->hw_ops;
 
+	gesture_type = core_data->gesture_type;
+
+	ts_info("panel gesture type set to %u", gesture_type);
 	switch (to) {
 	case TS_MMI_PM_GESTURE:
 		hw_ops->irq_enable(core_data, false);
 		if (hw_ops->gesture)
 #if defined(CONFIG_BOARD_USES_DOUBLE_TAP_CTRL)
-		if (core_data->imports && core_data->imports->get_gesture_type) {
-			ret = core_data->imports->get_gesture_type(core_data->bus->dev, &gesture_type);
-		}
 		if (gesture_type & TS_MMI_GESTURE_ZERO) {
 			gesture_cmd &= ~(1 << 5);
 			ts_info("enable zero gesture mode cmd 0x%04x\n", gesture_cmd);
@@ -1261,6 +1261,51 @@ static int goodix_ts_mmi_methods_get_active_region(struct device *dev, void *uid
 	return 0;
 }
 
+static int goodix_ts_mmi_fod_set_enable(struct device *dev, unsigned int enable) {
+	struct goodix_ts_core *core_data;
+	struct platform_device *pdev;
+
+	GET_GOODIX_DATA(dev);
+
+	if (enable == 1)
+		core_data->gesture_type |= 0x01;
+	else
+		core_data->gesture_type &= 0xFE;
+
+	ts_info("FOD: Gesture type set to %u", core_data->gesture_type);
+	return 0;
+}
+
+static int goodix_ts_mmi_dt_set_enable(struct device *dev, unsigned int enable) {
+	struct goodix_ts_core *core_data;
+	struct platform_device *pdev;
+
+	GET_GOODIX_DATA(dev);
+
+	if (enable == 1)
+		core_data->gesture_type |= 0x04;
+	else
+		core_data->gesture_type &= 0xFB;
+
+	ts_info("DT: Gesture type set to %u", core_data->gesture_type);
+	return 0;
+}
+
+static int goodix_ts_mmi_st_set_enable(struct device *dev, unsigned int enable) {
+	struct goodix_ts_core *core_data;
+	struct platform_device *pdev;
+
+	GET_GOODIX_DATA(dev);
+
+	if (enable == 1)
+		core_data->gesture_type |= 0x02;
+	else
+		core_data->gesture_type &= 0xFD;
+
+	ts_info("ST: Gesture type set to %u", core_data->gesture_type);
+	return 0;
+}
+
 static struct ts_mmi_methods goodix_ts_mmi_methods = {
 	.get_vendor = goodix_ts_mmi_methods_get_vendor,
 	.get_productinfo = goodix_ts_mmi_methods_get_productinfo,
@@ -1293,6 +1338,9 @@ static struct ts_mmi_methods goodix_ts_mmi_methods = {
 #ifdef CONFIG_GTP_FOD
 	.update_fod_mode = goodix_ts_mmi_update_fps_mode,
 #endif
+	.fod_set_enable = goodix_ts_mmi_fod_set_enable,
+	.dt_set_enable = goodix_ts_mmi_dt_set_enable,
+	.st_set_enable = goodix_ts_mmi_st_set_enable,
 };
 
 int goodix_ts_mmi_dev_register(struct platform_device *pdev) {

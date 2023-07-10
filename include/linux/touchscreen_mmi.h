@@ -266,6 +266,7 @@ struct touch_event_data {
 struct gesture_event_data {
 	 union {
 		int evcode;
+		int type;
 		struct touch_event_data evdata;
 	};
 };
@@ -276,7 +277,7 @@ struct gesture_event_data {
  * @report_gesture:    report gesture event
  */
 struct ts_mmi_class_methods {
-	int     (*report_gesture)(struct gesture_event_data *gev);
+	int     (*report_gesture)(struct gesture_event_data *gev, int type);
 	int     (*get_gesture_type)(struct device *dev, unsigned char *gesture_type);
 	int     (*report_palm)(bool value);
 	int     (*get_class_fname)(struct device *dev , const char **fname);
@@ -378,6 +379,9 @@ enum ts_mmi_work {
 	int	(*refresh_rate)(struct device *dev, int freq);
 	int	(*charger_mode)(struct device *dev, int mode);
 	int	(*palm_set_enable)(struct device *dev, unsigned int enable);
+	int	(*fod_set_enable)(struct device *dev, unsigned int enable);
+	int	(*dt_set_enable)(struct device *dev, unsigned int enable);
+	int	(*st_set_enable)(struct device *dev, unsigned int enable);
 	int	(*suppression)(struct device *dev, int state);
 	int	(*hold_grip)(struct device *dev, int state);
 	int	(*flash_mode)(struct device *dev, int state);
@@ -583,7 +587,9 @@ extern int ts_mmi_dev_register(struct device *parent,
 extern void ts_mmi_dev_unregister(struct device *parent);
 extern int ts_mmi_parse_dt(struct ts_mmi_dev *touch_cdev, struct device_node *of_node);
 extern int ts_mmi_gesture_init(struct ts_mmi_dev *data);
-extern int ts_mmi_gesture_remove(struct ts_mmi_dev *data);
+extern int ts_mmi_fod_gesture_remove(struct ts_mmi_dev *data);
+extern int ts_mmi_dt_gesture_remove(struct ts_mmi_dev *data);
+extern int ts_mmi_st_gesture_remove(struct ts_mmi_dev *data);
 extern int ts_mmi_cli_gesture_init(struct ts_mmi_dev *data);
 extern int ts_mmi_cli_gesture_remove(struct ts_mmi_dev *data);
 extern int ts_mmi_palm_init(struct ts_mmi_dev *data);
