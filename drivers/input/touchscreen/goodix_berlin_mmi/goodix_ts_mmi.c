@@ -762,6 +762,16 @@ static int goodix_ts_mmi_methods_get_config_id(struct device *dev, void *cdata) 
 			fw_id[0], fw_id[1], fw_id[2], fw_id[3]);
 }
 
+static int goodix_ts_mmi_methods_get_gesture_type(struct device *dev, void *idata) {
+	struct platform_device *pdev;
+	struct goodix_ts_core *core_data;
+
+	GET_GOODIX_DATA(dev);
+
+	TO_INT(idata) = core_data->gesture_type;
+	return 0;
+}
+
 static int goodix_ts_mmi_methods_get_bus_type(struct device *dev, void *idata) {
 	struct platform_device *pdev;
 	struct goodix_ts_core *core_data;
@@ -1311,6 +1321,7 @@ static struct ts_mmi_methods goodix_ts_mmi_methods = {
 	.get_productinfo = goodix_ts_mmi_methods_get_productinfo,
 	.get_build_id = goodix_ts_mmi_methods_get_build_id,
 	.get_config_id = goodix_ts_mmi_methods_get_config_id,
+	.get_gesture_type = goodix_ts_mmi_methods_get_gesture_type,
 	.get_bus_type = goodix_ts_mmi_methods_get_bus_type,
 	.get_irq_status = goodix_ts_mmi_methods_get_irq_status,
 	.get_drv_irq = goodix_ts_mmi_methods_get_drv_irq,

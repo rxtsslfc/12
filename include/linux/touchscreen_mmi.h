@@ -309,6 +309,7 @@ enum ts_mmi_work {
 	TS_MMI_DO_FPS,
 	TS_MMI_TASK_INIT,
 	TS_MMI_DO_LIQUID_DETECTION,
+	TS_MMI_SET_GESTURES,
 };
 
 #define TS_MMI_RESET_SOFT	0
@@ -356,6 +357,7 @@ enum ts_mmi_work {
 	int	(*get_build_id)(struct device *dev, void *cdata);
 	int	(*get_config_id)(struct device *dev, void *cdata);
 	int	(*get_class_entry_name)(struct device *dev, void *cdata);
+	int	(*get_gesture_type)(struct device *dev, void *idata);
 	int	(*get_bus_type)(struct device *dev, void *idata);
 	int	(*get_irq_status)(struct device *dev, void *idata);
 	int	(*get_drv_irq)(struct device *dev, void *idata);
@@ -414,6 +416,7 @@ enum ts_mmi_work {
 };
 
 #define TO_CHARP(dp)	((char*)(dp))
+#define TO_UCHARP(dp)	((unsigned char*)(dp))
 #define TO_INT(dp)	(*(int*)(dp))
 
 #define TOUCHSCREEN_MMI_BUS_TYPE_I2C	0

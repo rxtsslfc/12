@@ -328,6 +328,12 @@ static ssize_t pwr_store(struct device *dev,
 static DEVICE_ATTR(pwr, (S_IWUSR | S_IWGRP), NULL, pwr_store);
 
 #ifdef CONFIG_BOARD_USES_DOUBLE_TAP_CTRL
+static void gesture_sync(struct ts_mmi_dev *touch_cdev)
+{
+	kfifo_put(&touch_cdev->cmd_pipe, TS_MMI_SET_GESTURES);
+	schedule_delayed_work(&touch_cdev->work, 0);
+}
+
 /*
  * gesture value used to indicate which gesture mode type is enabled
  */
@@ -394,21 +400,19 @@ static ssize_t double_tap_enabled_show(struct device *dev,
 	struct ts_mmi_dev *touch_cdev = dev_get_drvdata(dev);
 
 	return snprintf(buf, PAGE_SIZE, "%u\n",
-			!!(touch_cdev->gesture_mode_type & TS_MMI_GESTURE_SINGLE));
+			!!(touch_cdev->gesture_mode_type & TS_MMI_GESTURE_DOUBLE));
 }
+
 static ssize_t double_tap_enabled_store(struct device *dev,
 					struct device_attribute *attr,
 					const char *buf, size_t count)
 {
 	struct ts_mmi_dev *touch_cdev = dev_get_drvdata(dev);
+	int ret = 0;
 
-	mutex_lock(&touch_cdev->extif_mutex);
-	if (buf[0] != '0')
-		touch_cdev->gesture_mode_type |= 0x04;
-	else
-		touch_cdev->gesture_mode_type &= 0xFB;
-	mutex_unlock(&touch_cdev->extif_mutex);
+	TRY_TO_CALL(dt_set_enable, (buf[0] != '0'));
 
+	gesture_sync(touch_cdev);
 	return count;
 }
 static DEVICE_ATTR_RW(double_tap_enabled);

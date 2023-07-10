@@ -382,6 +382,15 @@ static void ts_mmi_worker_func(struct work_struct *w)
 				TRY_TO_CALL(update_liquid_detect_mode, touch_cdev->lpd_state);
 				break;
 
+		case TS_MMI_SET_GESTURES:
+		        if (atomic_cmpxchg(&touch_cdev->touch_stopped, 0, 1) != 1)
+	        	        break;
+			TRY_TO_CALL(power, TS_MMI_POWER_ON);
+			ts_mmi_queued_resume(touch_cdev);
+			mdelay(100);
+			ts_mmi_panel_off(touch_cdev);
+			break;
+
 		default:
 			dev_dbg(DEV_MMI, "%s: unknown command %d\n", __func__, cmd);
 		}

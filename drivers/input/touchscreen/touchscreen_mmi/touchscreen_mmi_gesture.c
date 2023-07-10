@@ -428,7 +428,13 @@ static int st_ts_mmi_touch_event_handler(struct touch_event_data *tev,  struct i
 
 bool ts_mmi_is_sensor_enable(void)
 {
+	struct ts_mmi_dev *touch_cdev = dt_sensor_pdata->touch_cdev;
 	bool enabled = false;
+	int gesture_type = 0, ret = 0;
+	TRY_TO_GET(gesture_type, &gesture_type);
+
+	if (gesture_type != 0)
+		return true;
 
 	pr_info("%s: checking if sensor is enabled, round 0: %d", __func__, enabled);
 	if (fod_sensor_pdata != NULL) {
