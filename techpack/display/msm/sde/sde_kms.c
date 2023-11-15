@@ -3798,8 +3798,6 @@ end:
 
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
-
-	return ret;
 }
 
 
@@ -3852,7 +3850,7 @@ static int sde_kms_trigger_null_flush(struct msm_kms *kms)
 			SDE_DEBUG("triggering null commit on enc:%d\n",
 					DRMID(splash_display->encoder));
 			SDE_EVT32(DRMID(splash_display->encoder), SDE_EVTLOG_FUNC_ENTRY);
-			rc = _sde_kms_null_commit(sde_kms->dev, splash_display->encoder);
+			 _sde_kms_null_commit(sde_kms->dev, splash_display->encoder);
 		}
 	}
 
