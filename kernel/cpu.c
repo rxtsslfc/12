@@ -1518,7 +1518,9 @@ int __boot_cpu_id;
 /* Horrific hacks because we can't add more to cpuhp_hp_states. */
 static int random_and_perf_prepare_fusion(unsigned int cpu)
 {
+#ifdef CONFIG_PERF_EVENTS
 	perf_event_init_cpu(cpu);
+#endif
 	random_prepare_cpu(cpu);
 	return 0;
 }
@@ -1625,13 +1627,11 @@ static struct cpuhp_step cpuhp_hp_states[] = {
 		.startup.single		= NULL,
 		.teardown.single	= smpcfd_dying_cpu,
 	},
-#ifndef CONFIG_ARM_QCOM_CPUFREQ_HW
 	/* Entry state on starting. Interrupts enabled from here on. Transient
 	 * state for synchronsization */
 	[CPUHP_AP_ONLINE] = {
 		.name			= "ap:online",
 	},
-#endif
 	/*
 	 * Handled on controll processor until the plugged processor manages
 	 * this itself.
